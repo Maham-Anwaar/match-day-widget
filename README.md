@@ -69,7 +69,7 @@ The widget appears in the top-right corner of your desktop, and a **court icon**
 - **Menu bar:**
   - **Size:** Small or Medium.
   - **Show:** Automatic (live when something's on), or pin it to the live or the idle view.
-  - **Scale:** 100%, 75% or 50% of the design size.
+  - **Scale:** 100%, 75% (the default) or 50% of the design size.
   - **Demo data:** shows the sample match from the screenshots, handy when nothing's on.
   - **Keep on desktop:** pinned behind your windows like a widget; turn it off to float it above them.
   - **Open at login**, **Reset position**, **Edit settings…**, **Reload settings**, **Refresh**, **Quit**.
@@ -82,7 +82,7 @@ The widget appears in the top-right corner of your desktop, and a **court icon**
 {
   "size": "small",
   "view": "auto",
-  "scale": 1,
+  "scale": 0.75,
   "accent": "#BFF04E",
   "demo": false,
   "keepOnDesktop": true,

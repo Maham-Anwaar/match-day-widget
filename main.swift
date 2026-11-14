@@ -15,7 +15,7 @@ let configURL = baseDir.appendingPathComponent("config.json")
 let defaultConfig: [String: Any] = [
     "size": "small",                       // small | medium
     "view": "auto",                        // auto | live | idle
-    "scale": 1.0,                          // 1.0 = the design's size
+    "scale": 0.75,                         // 1.0 = the design's size
     "accent": "#BFF04E",
     "demo": false,
     "keepOnDesktop": true,
@@ -66,7 +66,7 @@ final class Config {
 
     var size: String { (values["size"] as? String).flatMap { s in sizes.contains { $0.key == s } ? s : nil } ?? "small" }
     var view: String { values["view"] as? String ?? "auto" }
-    var scale: Double { min(2, max(0.25, values["scale"] as? Double ?? 1)) }
+    var scale: Double { min(2, max(0.25, values["scale"] as? Double ?? 0.75)) }
     var demo: Bool { values["demo"] as? Bool ?? false }
     var keepOnDesktop: Bool { values["keepOnDesktop"] as? Bool ?? true }
     var pixelSize: NSSize {
