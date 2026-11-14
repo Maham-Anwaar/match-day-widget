@@ -1,0 +1,669 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Match Day</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+  html, body { margin: 0; background: transparent; overflow: hidden; -webkit-user-select: none; user-select: none; cursor: default; }
+  svg { display: block; }
+  .root { box-sizing: border-box; border-radius: 48px; overflow: hidden; background: #14171B; padding: 26px; font-family: 'Space Grotesk', system-ui, sans-serif; color: #F2F4F3; }
+  .px { font-family: 'Silkscreen', ui-monospace, monospace; }
+  .muted { color: #AEB6BD; }
+  .soft { color: #DDE2E6; }
+  .nowrap { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+(function () {
+  // ---------------------------------------------------------------- settings
+  var cfg = {
+    size: 'small',              // small | medium
+    view: 'auto',               // auto | live | idle
+    accent: '#BFF04E',
+    demo: false,
+    cricketTeams: ['PAK'],      // cricket teams you follow (ESPN abbreviations)
+    internationalCricket: true, // also show men's internationals between full-member nations
+    footballLeagues: ['eng.1', 'uefa.champions'],
+    favoriteTeam: { league: 'eng.1', id: '364' },   // Liverpool: next match + league row
+    timeZoneLabel: ''           // e.g. "PKT"; empty = automatic
+  };
+
+  var ORANGE = '#FF9A3C';
+  var INTL = ['AFG', 'AUS', 'BAN', 'ENG', 'IND', 'IRE', 'NZ', 'PAK', 'SA', 'SL', 'WI', 'ZIM'];
+  var LEAGUE_NAMES = { 'eng.1': 'Premier League', 'uefa.champions': 'Champions League', 'esp.1': 'La Liga', 'ger.1': 'Bundesliga', 'ita.1': 'Serie A', 'fra.1': 'Ligue 1', 'uefa.europa': 'Europa League' };
+  var ESPN = 'https://site.api.espn.com/apis/site/v2/sports/';
+  var ESPN_WEB = 'https://site.web.api.espn.com/apis/site/v2/sports/';
+
+  var model = null;      // what's on screen
+  var timer = null;
+
+  function $(id) { return document.getElementById(id); }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function up(s) { return esc(String(s || '').toUpperCase()); }
+  function post(msg) { try { window.webkit.messageHandlers.native.postMessage(msg); } catch (e) {} }
+  function now() { return model && model.demoNow ? model.demoNow + (Date.now() - model.demoAt) : Date.now(); }
+
+  // Drag the widget from anywhere.
+  document.addEventListener('mousedown', function (e) { if (e.button === 0) { post({ type: 'drag' }); } });
+
+  // ---------------------------------------------------------------- pixel art
+  function iconCricket(s) {
+    return '<svg width="' + s + '" height="' + s + '" viewBox="0 0 10 10" shape-rendering="crispEdges" role="img" aria-label="Cricket"><g fill="#E8ECEF"><rect x="1" y="1" width="8" height="1"></rect><rect x="1" y="2" width="1" height="7"></rect><rect x="4" y="2" width="1" height="7"></rect><rect x="7" y="2" width="1" height="7"></rect></g></svg>';
+  }
+  function iconFootball(s) {
+    return '<svg width="' + s + '" height="' + s + '" viewBox="0 0 10 10" shape-rendering="crispEdges" role="img" aria-label="Football"><g fill="#F2F4F3"><rect x="3" y="0" width="4" height="1"></rect><rect x="1" y="1" width="8" height="1"></rect><rect x="0" y="2" width="10" height="6"></rect><rect x="1" y="8" width="8" height="1"></rect><rect x="3" y="9" width="4" height="1"></rect></g><g fill="#14171B"><rect x="4" y="2" width="2" height="2"></rect><rect x="2" y="5" width="1" height="1"></rect><rect x="7" y="5" width="1" height="1"></rect><rect x="4" y="7" width="2" height="1"></rect></g></svg>';
+  }
+  function sportIcon(sport, s) { return sport === 'cricket' ? iconCricket(s) : iconFootball(s); }
+
+  // 12×8 pixel flags for cricket nations.
+  var FLAGS = {
+    PAK: '<rect width="12" height="8" fill="#01411C"></rect><g fill="#F2F4F3"><rect width="3" height="8"></rect><rect x="6" y="2" width="1" height="1"></rect><rect x="5" y="3" width="1" height="2"></rect><rect x="6" y="5" width="1" height="1"></rect><rect x="9" y="2" width="1" height="1"></rect></g>',
+    AUS: '<rect width="12" height="8" fill="#00843D"></rect><rect y="6" width="12" height="2" fill="#FFCD00"></rect>',
+    NZ: '<rect width="12" height="8" fill="#13224F"></rect><g fill="#F2F4F3"><rect x="6" y="2" width="1" height="1"></rect><rect x="5" y="3" width="3" height="1"></rect><rect x="6" y="4" width="1" height="2"></rect><rect x="9" y="3" width="1" height="1"></rect></g>',
+    ENG: '<rect width="12" height="8" fill="#EDEFF2"></rect><g fill="#CE1124"><rect y="3" width="12" height="2"></rect><rect x="5" width="2" height="8"></rect></g>',
+    IND: '<rect width="12" height="3" fill="#FF9933"></rect><rect y="3" width="12" height="2" fill="#F2F4F3"></rect><rect y="5" width="12" height="3" fill="#138808"></rect><rect x="5" y="3" width="2" height="2" fill="#000080"></rect>',
+    SA: '<rect width="12" height="8" fill="#007749"></rect><rect y="3" width="12" height="2" fill="#FFB81C"></rect><rect width="3" height="8" fill="#000000"></rect><rect x="3" y="3" width="1" height="2" fill="#FFB81C"></rect>',
+    SL: '<rect width="12" height="8" fill="#FFBE29"></rect><rect x="1" y="1" width="10" height="6" fill="#8D153A"></rect><rect x="1" y="1" width="1" height="6" fill="#00534E"></rect><rect x="2" y="1" width="1" height="6" fill="#EB7400"></rect><rect x="6" y="3" width="2" height="2" fill="#FFBE29"></rect>',
+    WI: '<rect width="12" height="8" fill="#7B0041"></rect><rect x="5" y="3" width="2" height="5" fill="#FFC72C"></rect><rect x="3" y="2" width="6" height="1" fill="#2E8B57"></rect>',
+    BAN: '<rect width="12" height="8" fill="#006A4E"></rect><rect x="4" y="2" width="3" height="4" fill="#F42A41"></rect><rect x="3" y="3" width="5" height="2" fill="#F42A41"></rect>',
+    AFG: '<rect width="4" height="8" fill="#0B0B0B"></rect><rect x="4" width="4" height="8" fill="#D32011"></rect><rect x="8" width="4" height="8" fill="#007A36"></rect>',
+    IRE: '<rect width="4" height="8" fill="#169B62"></rect><rect x="4" width="4" height="8" fill="#F2F4F3"></rect><rect x="8" width="4" height="8" fill="#FF883E"></rect>',
+    ZIM: '<rect width="12" height="8" fill="#006400"></rect><rect y="1" width="12" height="1" fill="#FFD200"></rect><rect y="6" width="12" height="1" fill="#FFD200"></rect><rect y="2" width="12" height="1" fill="#D40000"></rect><rect y="5" width="12" height="1" fill="#D40000"></rect><rect y="3" width="12" height="2" fill="#0B0B0B"></rect><rect width="2" height="8" fill="#F2F4F3"></rect>'
+  };
+  function flag(abbr, w, h) {
+    var key = String(abbr || '').split('-')[0];
+    var inner = FLAGS[key] || '<rect width="12" height="8" fill="#3A424B"></rect><rect x="1" y="1" width="10" height="6" fill="#4B545E"></rect>';
+    return '<svg width="' + w + '" height="' + h + '" viewBox="0 0 12 8" shape-rendering="crispEdges" role="img" aria-label="' + esc(abbr) + '">' + inner + '</svg>';
+  }
+
+  // 10×10 pixel shield in a club's colors.
+  var SHIELD = '<rect x="1" y="0" width="8" height="1"></rect><rect x="0" y="1" width="10" height="4"></rect><rect x="1" y="5" width="8" height="2"></rect><rect x="2" y="7" width="6" height="1"></rect><rect x="3" y="8" width="4" height="1"></rect><rect x="4" y="9" width="2" height="1"></rect>';
+  function crest(t, s) {
+    var c = t.color || '#6B7480', a = t.alt || '#F2F4F3', mark;
+    switch (t.style) {
+      case 'vstripes': mark = '<g fill="' + a + '"><rect x="2" y="0" width="2" height="7"></rect><rect x="6" y="0" width="2" height="7"></rect></g>'; break;
+      case 'sides': mark = '<g fill="' + a + '"><rect x="0" y="1" width="1" height="4"></rect><rect x="9" y="1" width="1" height="4"></rect></g>'; break;
+      case 'band2': mark = '<rect x="0" y="2" width="10" height="2" fill="' + a + '"></rect>'; break;
+      case 'bandHigh': mark = '<rect x="0" y="2" width="10" height="1" fill="' + a + '"></rect>'; break;
+      default: mark = '<rect x="0" y="3" width="10" height="1" fill="' + a + '"></rect>';
+    }
+    return '<svg width="' + s + '" height="' + s + '" viewBox="0 0 10 10" shape-rendering="crispEdges" role="img" aria-label="' + esc(t.name || t.abbr) + '"><g fill="' + c + '">' + SHIELD + '</g>' + mark + '</svg>';
+  }
+  // Flag for cricket, crest for football; `big` picks the larger of the design's two sizes.
+  function mark(sport, t, fw, fh, cs) { return sport === 'cricket' ? flag(t.abbr, fw, fh) : crest(t, cs); }
+
+  // ---------------------------------------------------------------- formatting
+  function tzLabel() {
+    if (cfg.timeZoneLabel) { return cfg.timeZoneLabel; }
+    if (model && model.tz) { return model.tz; }
+    try {
+      var p = new Intl.DateTimeFormat('en-US', { timeZoneName: 'short' }).formatToParts(new Date());
+      return (p.find(function (x) { return x.type === 'timeZoneName'; }) || {}).value || 'LOCAL';
+    } catch (e) { return 'LOCAL'; }
+  }
+  function timeStr(t) { return new Date(t).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }); }
+  function isLate(t) { var h = new Date(t).getHours(); return h < 6; }
+  function dayStart(t) { var d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); }
+  function addDays(t, n) { var d = new Date(t); d.setDate(d.getDate() + n); return d.getTime(); }
+  function ymd(t) { var d = new Date(t); return d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0'); }
+  function dayLabel(t) { var d = new Date(t); return d.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase() + ' ' + d.getDate(); }
+  function whenWord(t) {
+    var d = Math.round((dayStart(t) - dayStart(now())) / 864e5);
+    if (d === 0) { return new Date(t).getHours() >= 17 ? 'TONIGHT' : 'TODAY'; }
+    if (d === 1) { return 'TOMORROW'; }
+    return new Date(t).toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' }).toUpperCase();
+  }
+  function countdown(t) {
+    var m = Math.max(0, Math.round((t - now()) / 60000));
+    if (m < 60) { return 'IN ' + m + 'M'; }
+    var h = Math.floor(m / 60);
+    if (h < 48) { return 'IN ' + h + 'H ' + (m % 60) + 'M'; }
+    return 'IN ' + Math.floor(h / 24) + 'D ' + (h % 24) + 'H';
+  }
+  function ordinal(n) { n = +n; var s = ['TH', 'ST', 'ND', 'RD'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); }
+
+  // ---------------------------------------------------------------- small widgets
+  function smallLive(m) {
+    var L = m.primary, a = cfg.accent;
+    var head = '<div style="display: flex; justify-content: space-between; align-items: center">'
+      + '<div style="display: flex; align-items: center; gap: 9px">' + sportIcon(L.sport, 20)
+      + '<span style="display: inline-block; width: 8px; height: 8px; background: ' + a + '"></span>'
+      + '<span class="px" style="font-size: 13px; letter-spacing: 1px; color: ' + a + '">LIVE</span></div>'
+      + '<span class="px muted nowrap" style="font-size: 11px; letter-spacing: 1px; max-width: 150px">' + up(L.short) + '</span></div>';
+    var mid, bottom;
+    if (L.sport === 'cricket') {
+      var bat = L.batting, bowl = L.fielding;
+      mid = '<div style="display: flex; flex-direction: column; gap: 10px">'
+        + '<div style="display: flex; align-items: center; gap: 10px">' + flag(bat.abbr, 24, 16)
+        + '<span class="px" style="font-size: 14px; letter-spacing: 1px">' + up(bat.abbr) + '</span>'
+        + '<span class="px muted" style="font-size: 10px; letter-spacing: 1px">' + (L.chasing ? 'CHASING' : 'BATTING') + '</span></div>'
+        + '<div style="display: flex; align-items: baseline; gap: 10px">'
+        + '<span style="font-size: 50px; font-weight: 700; letter-spacing: -1px; line-height: 1">' + esc(bat.score) + '</span>'
+        + '<span class="muted" style="font-size: 17px; font-weight: 500">' + esc(bat.overs) + '</span></div>'
+        + '<div style="display: flex; align-items: center; gap: 9px">' + flag(bowl.abbr, 18, 12)
+        + '<span class="px muted" style="font-size: 11px; letter-spacing: 1px">' + up(bowl.abbr) + (bowl.score ? ' ' + esc(bowl.score) : '') + '</span></div></div>';
+      bottom = stakeBox(cricketStake(L), a, 'center');
+    } else {
+      mid = '<div style="display: flex; flex-direction: column; gap: 12px">'
+        + teamScoreRow(L.home, L.home.score) + teamScoreRow(L.away, L.away.score) + '</div>';
+      bottom = stakeBox(esc(L.minute) + ' · ' + up(L.leagueName), a, 'center');
+    }
+    return '<div class="root" style="width: 340px; height: 340px; display: flex; flex-direction: column; justify-content: space-between">' + head + mid + bottom + '</div>';
+  }
+  function teamScoreRow(t, score) {
+    return '<div style="display: flex; align-items: center; gap: 10px">' + crest(t, 26)
+      + '<span class="px" style="font-size: 15px; letter-spacing: 1px; flex-grow: 1">' + up(t.abbr) + '</span>'
+      + '<span style="font-size: 44px; font-weight: 700; line-height: 1">' + esc(score) + '</span></div>';
+  }
+  function cricketStake(L) {
+    if (L.need != null && L.need > 0) { return 'NEED ' + L.need + (L.ballsLeft ? ' OFF ' + L.ballsLeft : ''); }
+    if (L.summary) { return up(L.summary.replace(/^.*?\b(trail|lead)s?\b/i, function (x, w) { return w; })); }
+    return 'RR ' + esc(L.runRate || '-');
+  }
+  function stakeBox(text, color, justify, right) {
+    var rgb = hexRgb(color);
+    return '<div style="display: flex; align-items: center; justify-content: ' + (right ? 'space-between' : justify) + '; padding: ' + (right ? '12px 14px' : '13px 10px') + '; border: 1px solid rgba(' + rgb + ', 0.38); background: rgba(' + rgb + ', 0.12); border-radius: 14px">'
+      + '<span class="px nowrap" style="font-size: 13px; letter-spacing: 0.5px; color: ' + color + '">' + text + '</span>'
+      + (right ? '<span class="px muted nowrap" style="font-size: 10px; letter-spacing: 1px; margin-left: 8px">' + right + '</span>' : '') + '</div>';
+  }
+  function hexRgb(h) { h = h.replace('#', ''); if (h.length === 3) { h = h.replace(/./g, '$&$&'); } var n = parseInt(h, 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255].join(', '); }
+
+  function smallNext(m) {
+    var N = m.next;
+    if (!N) { return emptyCard(340, 'NEXT UP', 'NO UPCOMING MATCHES FOUND'); }
+    var head = '<div style="display: flex; justify-content: space-between; align-items: center">'
+      + '<div style="display: flex; align-items: center; gap: 9px">' + sportIcon(N.sport, 20)
+      + '<span class="px muted" style="font-size: 13px; letter-spacing: 1px">NEXT UP</span></div>'
+      + '<span class="px muted nowrap" style="font-size: 11px; letter-spacing: 1px; max-width: 150px">' + up(N.short) + '</span></div>';
+    var side = function (t) {
+      return '<div style="display: flex; align-items: center; gap: 8px">' + mark(N.sport, t, 30, 20, 26)
+        + '<span class="px" style="font-size: 15px; letter-spacing: 1px">' + up(t.abbr) + '</span></div>';
+    };
+    var mid = '<div style="display: flex; flex-direction: column; gap: 14px">'
+      + '<div style="display: flex; align-items: center; gap: 12px">' + side(N.home) + '<span class="muted" style="font-size: 15px; font-weight: 500">v</span>' + side(N.away) + '</div>'
+      + '<div style="display: flex; flex-direction: column; gap: 5px">'
+      + '<span style="font-size: 31px; font-weight: 700; letter-spacing: -0.5px; line-height: 1">' + esc(timeStr(N.date)) + '</span>'
+      + '<span class="px muted nowrap" style="font-size: 10px; letter-spacing: 1px">' + whenWord(N.date) + ' ' + up(tzLabel()) + (N.venue ? ' - ' + up(N.venue) : '') + '</span></div></div>';
+    var bottom = stakeBox(countdown(N.date), ORANGE, 'space-between', up(N.broadcast || ''));
+    return '<div class="root" style="width: 340px; height: 340px; display: flex; flex-direction: column; justify-content: space-between">' + head + mid + bottom + '</div>';
+  }
+
+  function emptyCard(w, title, text) {
+    return '<div class="root" style="width: ' + w + 'px; height: 340px; display: flex; flex-direction: column; justify-content: space-between">'
+      + '<div style="display: flex; align-items: center; gap: 9px">' + iconCricket(18) + iconFootball(18) + '<span class="px muted" style="font-size: 12px; letter-spacing: 1px">' + title + '</span></div>'
+      + '<span class="px muted" style="font-size: 12px; letter-spacing: 1px; text-align: center">' + text + '</span>'
+      + '<span class="px muted" style="font-size: 9px; letter-spacing: 1px">' + footerText(m0()) + '</span></div>';
+  }
+  function m0() { return model || {}; }
+  function footerText(m) {
+    if (m.offline) { return 'OFFLINE - RETRYING'; }
+    if (m.demo) { return 'DEMO DATA'; }
+    return m.updated ? 'UPDATED ' + up(timeStr(m.updated)) : 'LOADING';
+  }
+
+  // ---------------------------------------------------------------- medium widgets
+  function mediumLive(m) {
+    var L = m.primary, a = cfg.accent, left;
+    if (L.sport === 'cricket') {
+      var bat = L.batting, bowl = L.fielding;
+      var batters = (L.batters || []).map(function (b, i) {
+        var lead = i === 0;
+        return '<div style="display: flex; align-items: center; gap: 9px">'
+          + '<span style="display: inline-block; width: 7px; height: 7px; background: ' + (lead ? a : 'rgba(242, 244, 243, 0.18)') + '"></span>'
+          + '<span class="nowrap' + (lead ? '' : ' soft') + '" style="font-size: 15px; font-weight: 500; flex-grow: 1">' + esc(b.name) + '</span>'
+          + '<span class="' + (lead ? '' : 'soft') + '" style="font-size: 15px; font-weight: ' + (lead ? 700 : 500) + '">' + b.runs + ' (' + b.balls + ')</span></div>';
+      }).join('');
+      if (L.bowler) {
+        batters += '<div style="display: flex; align-items: center; gap: 9px; padding-left: 16px">'
+          + '<span class="px muted nowrap" style="font-size: 10px; letter-spacing: 1px; flex-grow: 1">BOWLING - ' + up(L.bowler.surname) + '</span>'
+          + '<span class="px muted" style="font-size: 10px; letter-spacing: 1px">' + esc(L.bowler.figures) + '</span></div>';
+      }
+      var balls = (L.thisOver || []).slice(-8).map(ballBox);
+      var legal = (L.thisOver || []).filter(function (b) { return b !== 'WD' && b !== 'NB'; }).length;
+      for (var i = legal; i < 6; i++) { balls.push('<span class="px muted" style="display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; box-sizing: border-box; border: 1px dashed rgba(242, 244, 243, 0.25); font-size: 12px">-</span>'); }
+      var stakeExtra = [];
+      if (bowl.score) { stakeExtra.push(up(bowl.abbr) + ' ' + esc(bowl.score)); }
+      if (L.rrr) { stakeExtra.push('RRR ' + L.rrr); }
+      left = '<div style="display: flex; align-items: center; gap: 9px">' + iconCricket(18)
+        + '<span style="display: inline-block; width: 8px; height: 8px; background: ' + a + '"></span>'
+        + '<span class="px" style="font-size: 12px; letter-spacing: 1px; color: ' + a + '">LIVE</span>'
+        + '<span class="px muted nowrap" style="font-size: 10px; letter-spacing: 1px">' + up(L.title) + '</span></div>'
+        + '<div style="display: flex; align-items: flex-end; justify-content: space-between">'
+        + '<div style="display: flex; align-items: baseline; gap: 11px">' + flag(bat.abbr, 26, 18)
+        + '<span style="font-size: 52px; font-weight: 700; letter-spacing: -1px; line-height: 1">' + esc(bat.score) + '</span>'
+        + '<span class="muted" style="font-size: 17px; font-weight: 500">' + esc(bat.overs) + (bat.overs ? ' ov' : '') + '</span></div>'
+        + '<div style="text-align: right"><div class="px muted" style="font-size: 10px; letter-spacing: 1px">RUN RATE</div>'
+        + '<div style="font-size: 19px; font-weight: 700">' + esc(L.runRate || '-') + '</div></div></div>'
+        + stakeRow(cricketStake(L), stakeExtra.join(' - '), a)
+        + '<div style="display: flex; flex-direction: column; gap: 7px">' + batters + '</div>'
+        + '<div style="display: flex; align-items: center; gap: 12px"><span class="px muted" style="font-size: 10px; letter-spacing: 1px">THIS OVER</span>'
+        + '<div style="display: flex; gap: 7px">' + balls.join('') + '</div></div>';
+    } else {
+      var goals = (L.goals || []).slice(-4).map(function (g) {
+        return '<div style="display: flex; align-items: center; gap: 9px">'
+          + '<span style="display: inline-block; width: 7px; height: 7px; background: ' + (g.side === 'home' ? L.home.color : L.away.color) + '"></span>'
+          + '<span class="nowrap" style="font-size: 15px; font-weight: 500; flex-grow: 1">' + esc(g.player) + '</span>'
+          + '<span class="px muted" style="font-size: 11px">' + esc(g.clock) + '</span></div>';
+      }).join('') || '<span class="px muted" style="font-size: 10px; letter-spacing: 1px">NO GOALS YET</span>';
+      left = '<div style="display: flex; align-items: center; gap: 9px">' + iconFootball(18)
+        + '<span style="display: inline-block; width: 8px; height: 8px; background: ' + a + '"></span>'
+        + '<span class="px" style="font-size: 12px; letter-spacing: 1px; color: ' + a + '">LIVE</span>'
+        + '<span class="px muted nowrap" style="font-size: 10px; letter-spacing: 1px">' + up(L.title) + '</span></div>'
+        + '<div style="display: flex; align-items: center; gap: 14px">' + crest(L.home, 30)
+        + '<span class="px" style="font-size: 16px; letter-spacing: 1px">' + up(L.home.abbr) + '</span>'
+        + '<span style="font-size: 52px; font-weight: 700; letter-spacing: -1px; line-height: 1">' + esc(L.home.score) + '-' + esc(L.away.score) + '</span>'
+        + '<span class="px" style="font-size: 16px; letter-spacing: 1px">' + up(L.away.abbr) + '</span>' + crest(L.away, 30) + '</div>'
+        + stakeRow(esc(L.minute), up(L.leagueName), a)
+        + '<div style="display: flex; flex-direction: column; gap: 7px">' + goals + '</div>';
+    }
+
+    var right = '<span class="px muted" style="font-size: 10px; letter-spacing: 1px">ALSO ON</span>';
+    var also = (m.alsoOn || []).slice(0, 1);
+    var laterN = also.length ? 2 : 4;
+    if (also.length) {
+      right += also.map(function (o) {
+        var sc = o.sport === 'cricket';
+        return '<div style="display: flex; flex-direction: column; gap: 9px">'
+          + '<div style="display: flex; align-items: center; gap: 7px"><span style="display: inline-block; width: 7px; height: 7px; background: ' + a + '"></span>'
+          + mark(o.sport, o.home, 22, 15, 18) + '<span class="px" style="font-size: 11px; letter-spacing: 0.5px; flex-grow: 1">' + up(o.home.abbr) + '</span>'
+          + '<span style="font-size: ' + (sc ? 13 : 17) + 'px; font-weight: 700">' + esc(sc ? o.home.score : o.home.score + '-' + o.away.score) + '</span></div>'
+          + '<div style="display: flex; align-items: center; gap: 7px; padding-left: 14px">' + mark(o.sport, o.away, 22, 15, 18)
+          + '<span class="px soft" style="font-size: 11px; letter-spacing: 0.5px; flex-grow: 1">' + up(o.away.abbr) + '</span>'
+          + (sc ? '<span style="font-size: 13px; font-weight: 500" class="soft">' + esc(o.away.score) + '</span>'
+                : '<span class="px" style="font-size: 11px; color: ' + a + '">' + esc(o.minute) + '</span>') + '</div></div>';
+      }).join('');
+      right += '<div style="height: 1px; background: rgba(242, 244, 243, 0.1)"></div>';
+    }
+    var later = (m.later || []).slice(0, laterN);
+    right += '<div style="display: flex; flex-direction: column; gap: 11px">' + (later.length ? later.map(function (f) {
+      var late = isLate(f.date);
+      return '<div style="display: flex; align-items: center; gap: 8px">' + mark(f.sport, f.home, 22, 15, 16) + mark(f.sport, f.away, 22, 15, 16)
+        + '<span class="px soft nowrap" style="font-size: 10px; letter-spacing: 0.5px; flex-grow: 1">' + up(f.home.abbr) + ' V ' + up(f.away.abbr) + '</span>'
+        + '<span style="font-size: 13px; font-weight: ' + (late ? 500 : 700) + '"' + (late ? ' class="soft"' : '') + '>' + esc(timeStr(f.date)) + '</span></div>';
+    }).join('') : '<span class="px muted" style="font-size: 10px; letter-spacing: 1px">NOTHING ELSE TODAY</span>') + '</div>';
+    right += '<span class="px muted" style="font-size: 9px; letter-spacing: 1px">' + footerText(m) + '</span>';
+
+    return '<div class="root" style="width: 728px; height: 340px; display: flex; gap: 24px">'
+      + '<div style="flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; justify-content: space-between">' + left + '</div>'
+      + '<div style="flex: 0 0 232px; border-left: 1px solid rgba(242, 244, 243, 0.1); padding-left: 24px; display: flex; flex-direction: column; justify-content: space-between">' + right + '</div></div>';
+  }
+  function stakeRow(main, extra, a) {
+    var rgb = hexRgb(a);
+    return '<div style="display: flex; align-items: center; gap: 10px; padding: 11px 14px; border: 1px solid rgba(' + rgb + ', 0.38); background: rgba(' + rgb + ', 0.12); border-radius: 13px">'
+      + '<span class="px nowrap" style="font-size: 13px; letter-spacing: 0.5px; color: ' + a + '">' + main + '</span>'
+      + (extra ? '<span class="px muted nowrap" style="font-size: 10px; letter-spacing: 1px">' + extra + '</span>' : '') + '</div>';
+  }
+  function ballBox(b) {
+    var bg = 'rgba(242, 244, 243, 0.08)', fg = '#F2F4F3';
+    if (b === '4' || b === '6') { bg = hexToRgba(cfg.accent, 0.9); fg = '#14171B'; }
+    else if (b === 'W') { bg = ORANGE; fg = '#14171B'; }
+    else if (b === '0') { fg = '#AEB6BD'; }
+    return '<span class="px" style="display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; background: ' + bg + '; font-size: ' + (b.length > 1 ? 10 : 12) + 'px; color: ' + fg + '">' + esc(b) + '</span>';
+  }
+  function hexToRgba(h, a) { return 'rgba(' + hexRgb(h) + ', ' + a + ')'; }
+
+  function mediumFixtures(m) {
+    var a = cfg.accent;
+    var cols = (m.days || []).map(function (d, di) {
+      var head = '<div class="px" style="padding-bottom: 7px; border-bottom: 1px solid ' + (di === 0 ? hexToRgba(a, 0.45) : 'rgba(242, 244, 243, 0.14)') + '; font-size: 10px; letter-spacing: 1px; color: ' + (di === 0 ? a : '#AEB6BD') + '">' + esc(d.label) + '</div>';
+      var items = d.items.slice(0, 3).map(function (f) {
+        var late = isLate(f.date) && f.state !== 'in';
+        var time = '<span style="font-size: 15px; font-weight: 700' + (late ? '; color: #DDE2E6' : '') + '">' + esc(timeStr(f.date)) + '</span>';
+        if (f.state === 'in') {
+          time = '<div style="display: flex; align-items: center; gap: 7px">' + time + '<span style="display: inline-block; width: 7px; height: 7px; background: ' + a + '"></span><span class="px" style="font-size: 9px; letter-spacing: 1px; color: ' + a + '">LIVE</span></div>';
+        } else if (f.state === 'post') {
+          time = '<div style="display: flex; align-items: center; gap: 7px">' + time + '<span class="px muted" style="font-size: 9px; letter-spacing: 1px">FT</span></div>';
+        }
+        return '<div style="display: flex; flex-direction: column; gap: 4px">' + time
+          + '<div style="display: flex; align-items: center; gap: 7px">' + mark(f.sport, f.home, 16, 11, 15) + mark(f.sport, f.away, 16, 11, 15)
+          + '<span class="px nowrap' + (late ? ' soft' : '') + '" style="font-size: 10px; letter-spacing: 0.5px">' + up(f.home.abbr) + ' V ' + up(f.away.abbr) + '</span></div>'
+          + '<span class="px muted nowrap" style="font-size: 9px; letter-spacing: 1px">' + up(f.sub) + '</span></div>';
+      }).join('');
+      if (!d.items.length) { items = '<span class="px muted" style="font-size: 9px; letter-spacing: 1px">NO MATCHES</span>'; }
+      else if (d.items.length > 3) { items += '<span class="px muted" style="font-size: 9px; letter-spacing: 1px">+' + (d.items.length - 3) + ' MORE</span>'; }
+      return '<div style="display: flex; flex-direction: column; gap: 13px; min-width: 0">' + head + items + '</div>';
+    }).join('');
+
+    var T = m.table, table = '';
+    if (T) {
+      var form = (T.form || []).map(function (r) {
+        var bg = r === 'W' ? a : (r === 'L' ? ORANGE : 'rgba(242, 244, 243, 0.22)');
+        var fg = r === 'D' ? '#F2F4F3' : '#14171B';
+        return '<span class="px" style="display: flex; align-items: center; justify-content: center; width: 19px; height: 19px; background: ' + bg + '; font-size: 9px; color: ' + fg + '">' + r + '</span>';
+      }).join('');
+      table = '<div style="display: flex; align-items: center; gap: 11px; padding: 11px 14px; background: rgba(242, 244, 243, 0.06); border-radius: 13px">'
+        + crest(T.team, 18) + '<span class="px" style="font-size: 10px; letter-spacing: 1px">' + up(T.team.name) + '</span>'
+        + '<span class="px muted nowrap" style="font-size: 10px; letter-spacing: 1px">' + ordinal(T.rank) + ' - ' + T.points + ' PTS - GD ' + esc(T.gd) + '</span>'
+        + '<div style="display: flex; gap: 5px; margin-left: auto">' + form + '</div></div>';
+    } else {
+      table = '<div class="px muted" style="font-size: 9px; letter-spacing: 1px; padding: 0 2px">' + footerText(m) + '</div>';
+    }
+
+    return '<div class="root" style="width: 728px; height: 340px; display: flex; flex-direction: column; justify-content: space-between">'
+      + '<div style="display: flex; align-items: center; justify-content: space-between">'
+      + '<div style="display: flex; align-items: center; gap: 9px">' + iconCricket(17) + iconFootball(17)
+      + '<span class="px" style="font-size: 12px; letter-spacing: 1px">NEXT 3 DAYS</span></div>'
+      + '<span class="px muted" style="font-size: 10px; letter-spacing: 1px">ALL TIMES ' + up(tzLabel()) + '</span></div>'
+      + '<div style="flex: 0 1 auto; min-height: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; align-content: start; overflow: hidden">' + cols + '</div>'
+      + table + '</div>';
+  }
+
+  function render() {
+    if (!model) { $('app').innerHTML = emptyCard(cfg.size === 'medium' ? 728 : 340, 'MATCH DAY', 'LOADING'); return; }
+    var live = cfg.view === 'live' || (cfg.view === 'auto' && model.primary);
+    if (live && !model.primary) { live = false; }
+    var html;
+    if (cfg.size === 'medium') { html = live ? mediumLive(model) : mediumFixtures(model); }
+    else { html = live ? smallLive(model) : smallNext(model); }
+    $('app').innerHTML = html;
+  }
+
+  // ---------------------------------------------------------------- live data (ESPN public feeds)
+  function getJSON(url) {
+    return fetch(url, { cache: 'no-store' }).then(function (r) { if (!r.ok) { throw new Error(r.status); } return r.json(); });
+  }
+  function settled(promises) {
+    return Promise.all(promises.map(function (p) { return p.then(function (v) { return v; }, function () { return null; }); }));
+  }
+  function parseCricketScore(s) {
+    s = String(s || '');
+    var m = s.match(/^(\d+)(?:\/(\d+))?/);
+    var ov = s.match(/\(([\d.]+)(?:\/\d+)?\s*ov/);
+    return { score: m ? (m[2] != null ? m[1] + '-' + m[2] : m[1]) : '', overs: ov ? ov[1] : '', batting: /ov/.test(s) && !/\bdec\b/.test(s) };
+  }
+  function cricketTeam(t) {
+    var p = parseCricketScore(t.score);
+    return { abbr: t.team.abbreviation, name: t.team.shortDisplayName || t.team.displayName || t.team.name, score: p.score, overs: p.overs, batting: p.batting, raw: t.score || '' };
+  }
+  function normCricket(e, lg) {
+    var c = e.competitions[0];
+    var teams = c.competitors.map(cricketTeam);
+    var home = teams[0], away = teams[1] || teams[0];
+    var desc = c.description || e.shortName || '';
+    return {
+      id: e.id, sport: 'cricket', leagueId: lg.id, leagueName: lg.name || '', date: new Date(e.date).getTime(),
+      state: e.status.type.state, home: home, away: away, short: desc, sub: desc,
+      title: home.abbr + ' v ' + away.abbr + ' - ' + desc + (c.venue && c.venue.address && c.venue.address.city ? ' - ' + c.venue.address.city : ''),
+      venue: (c.venue && (c.venue.shortName || c.venue.fullName)) || '',
+      summary: (e.status && e.status.summary) || (c.status && c.status.summary) || ''
+    };
+  }
+  function followsCricket(m) {
+    var t = [m.home.abbr, m.away.abbr];
+    if (t.some(function (x) { return cfg.cricketTeams.indexOf(x) >= 0; })) { return 2; }
+    if (cfg.internationalCricket && t.every(function (x) { return INTL.indexOf(x) >= 0; })) { return 1; }
+    return 0;
+  }
+  function footballTeam(t) {
+    var team = t.team || {};
+    var c = team.color ? '#' + team.color : '#6B7480', alt = team.alternateColor ? '#' + team.alternateColor : '#F2F4F3';
+    if (alt.toLowerCase() === c.toLowerCase()) { alt = '#F2F4F3'; }
+    var score = t.score;
+    if (score && typeof score === 'object') { score = score.displayValue; }
+    return { id: team.id, abbr: team.abbreviation, name: team.shortDisplayName || team.displayName || team.name, color: c, alt: alt, score: score == null ? '' : score, winner: t.winner };
+  }
+  function normFootball(e, league) {
+    var c = e.competitions[0];
+    var hc = c.competitors.find(function (x) { return x.homeAway === 'home'; }) || c.competitors[0];
+    var ac = c.competitors.find(function (x) { return x.homeAway === 'away'; }) || c.competitors[1];
+    var home = footballTeam(hc), away = footballTeam(ac);
+    var leagueName = LEAGUE_NAMES[league] || (e.league && e.league.name) || league;
+    var goals = (c.details || []).filter(function (d) { return d.scoringPlay; }).map(function (d) {
+      var who = (d.athletesInvolved && d.athletesInvolved[0]) || {};
+      return { player: who.shortName || who.displayName || 'Goal', clock: (d.clock && d.clock.displayValue) || '', side: d.team && d.team.id === home.id ? 'home' : 'away' };
+    });
+    var br = (c.broadcasts || []).map(function (b) { return (b.names || [])[0] || (b.media && b.media.shortName); }).filter(Boolean)[0] || '';
+    // Scoreboard events carry `status` at the top; team-schedule events carry it on the competition.
+    var status = e.status || c.status || { type: {} };
+    return {
+      id: e.id, sport: 'football', league: league, leagueName: leagueName, date: new Date(e.date).getTime(),
+      state: status.type.state || 'pre', minute: status.type.shortDetail || status.displayClock || '',
+      home: home, away: away, short: leagueName, sub: leagueName,
+      title: home.abbr + ' v ' + away.abbr + ' - ' + leagueName + (c.venue && c.venue.fullName ? ' - ' + c.venue.fullName : ''),
+      venue: (c.venue && c.venue.fullName) || '', broadcast: br, goals: goals
+    };
+  }
+
+  function loadCricket() {
+    var t = now(), offs = [0, 1, 2, 4, 7, 10];
+    return settled(offs.map(function (o) { return getJSON(ESPN + 'cricket/scorepanel?dates=' + ymd(addDays(t, o))); })).then(function (res) {
+      var map = {};
+      var ok = res.some(Boolean);
+      res.forEach(function (r) {
+        if (!r) { return; }
+        (r.scores || []).forEach(function (s) {
+          var lg = (s.leagues || [])[0] || {};
+          (s.events || []).forEach(function (e) { try { map[e.id] = normCricket(e, lg); } catch (x) {} });
+        });
+      });
+      return { ok: ok, list: Object.keys(map).map(function (k) { return map[k]; }).filter(followsCricket) };
+    });
+  }
+  function loadFootball() {
+    var t = now(), jobs = [];
+    cfg.footballLeagues.forEach(function (lg) {
+      [0, 1, 2].forEach(function (o) {
+        jobs.push(getJSON(ESPN + 'soccer/' + lg + '/scoreboard?dates=' + ymd(addDays(t, o))).then(function (r) { return { lg: lg, r: r }; }));
+      });
+    });
+    return settled(jobs).then(function (res) {
+      var map = {};
+      res.forEach(function (x) { if (x && x.r) { (x.r.events || []).forEach(function (e) { try { map[e.id] = normFootball(e, x.lg); } catch (err) {} }); } });
+      return { ok: res.some(Boolean), list: Object.keys(map).map(function (k) { return map[k]; }) };
+    });
+  }
+  function loadFavorite() {
+    var f = cfg.favoriteTeam;
+    if (!f || !f.id) { return Promise.resolve({}); }
+    var base = ESPN + 'soccer/' + f.league + '/teams/' + f.id + '/schedule';
+    return settled([
+      getJSON(base + '?fixture=true'),
+      getJSON(base),
+      getJSON('https://site.api.espn.com/apis/v2/sports/soccer/' + f.league + '/standings')
+    ]).then(function (r) {
+      var out = {};
+      if (r[0]) {
+        var fx = (r[0].events || []).map(function (e) { return normFootball(e, f.league); }).filter(function (m) { return m.date > now() - 3 * 3600e3; });
+        fx.sort(function (x, y) { return x.date - y.date; });
+        out.next = fx[0] || null;
+      }
+      var form = [];
+      if (r[1]) {
+        var done = (r[1].events || []).filter(function (e) { return e.competitions[0].status ? e.competitions[0].status.type.completed : true; });
+        done.sort(function (x, y) { return new Date(x.date) - new Date(y.date); });
+        done.slice(-5).forEach(function (e) {
+          var cs = e.competitions[0].competitors;
+          var me = cs.find(function (x) { return x.team.id === f.id; }), them = cs.find(function (x) { return x.team.id !== f.id; });
+          if (!me || !them) { return; }
+          var a = +((me.score && me.score.value) != null ? me.score.value : me.score), b = +((them.score && them.score.value) != null ? them.score.value : them.score);
+          form.push(a > b ? 'W' : (a < b ? 'L' : 'D'));
+        });
+      }
+      if (r[2]) {
+        var groups = r[2].children || [r[2]];
+        groups.forEach(function (g) {
+          ((g.standings || {}).entries || []).forEach(function (en) {
+            if (en.team.id !== f.id) { return; }
+            var st = {};
+            en.stats.forEach(function (s) { st[s.name] = s.displayValue; });
+            var logoTeam = footballTeam({ team: en.team });
+            if (out.next) { [out.next.home, out.next.away].forEach(function (t) { if (t.id === f.id) { logoTeam = t; } }); }
+            out.table = { team: logoTeam, rank: st.rank, points: st.points, gd: st.pointDifferential, form: form };
+          });
+        });
+      }
+      return out;
+    });
+  }
+  function loadCricketDetail(m) {
+    return getJSON(ESPN_WEB + 'cricket/' + m.leagueId + '/summary?event=' + m.id).then(function (d) {
+      var comp = d.header.competitions[0], com = comp.commentaries || {};
+      var balls = Object.keys(com).map(function (k) { return com[k]; }).sort(function (x, y) { return (x.sequence || 0) - (y.sequence || 0); });
+      var last = balls[balls.length - 1];
+      if (!last) { return null; }
+      var inn = last.innings || {}, ov = last.over || {};
+      var thisOver = balls.filter(function (b) { return b.over && b.over.number === ov.number && (b.innings || {}).number === inn.number; }).map(function (b) {
+        if (b.dismissal && b.dismissal.dismissal) { return 'W'; }
+        var t = String(b.shortText || '').toLowerCase();
+        if (/\bwide/.test(t)) { return 'WD'; }
+        if (/no ?ball/.test(t)) { return 'NB'; }
+        return String(b.scoreValue || 0);
+      });
+      var bat = function (x) {
+        return x && x.athlete ? { name: x.athlete.displayName || x.athlete.name, runs: x.totalRuns || 0, balls: x.faced || 0 } : null;
+      };
+      var bw = last.bowler;
+      var figures = bw ? Math.floor(bw.overs || 0) + ((bw.balls || 0) % 6 ? '.' + ((bw.balls || 0) % 6) : '') + '-' + (bw.maidens || 0) + '-' + (bw.conceded || 0) + '-' + (bw.wickets || 0) : '';
+      return {
+        battingAbbr: last.team && last.team.abbreviation,
+        runs: inn.runs, wickets: inn.wickets, target: inn.target, remainingBalls: inn.remainingBalls, runRate: inn.runRate,
+        batters: [bat(last.batsman), bat(last.otherBatsman)].filter(Boolean),
+        bowler: bw && bw.athlete ? { surname: bw.athlete.lastName || bw.athlete.displayName, figures: figures } : null,
+        thisOver: thisOver, summary: (comp.status && comp.status.summary) || ''
+      };
+    });
+  }
+
+  function buildLiveCricket(m, det) {
+    var t = [m.home, m.away];
+    var bat = t.find(function (x) { return x.batting; }) || t[0];
+    if (det && det.battingAbbr) { bat = t.find(function (x) { return x.abbr === det.battingAbbr; }) || bat; }
+    var field = t.find(function (x) { return x !== bat; }) || t[1];
+    var L = { sport: 'cricket', id: m.id, short: m.short, title: m.title, batting: bat, fielding: field, summary: m.summary };
+    if (det) {
+      if (det.runs != null) { bat = Object.assign({}, bat, { score: det.runs + (det.wickets < 10 ? '-' + det.wickets : '') }); L.batting = bat; }
+      L.runRate = det.runRate ? (+det.runRate).toFixed(2) : '';
+      if (det.target > 0) {
+        L.chasing = true;
+        L.need = det.target - det.runs;
+        L.ballsLeft = det.remainingBalls || 0;
+        L.rrr = L.ballsLeft ? (L.need / (L.ballsLeft / 6)).toFixed(2) : '';
+      }
+      L.batters = det.batters;
+      L.bowler = det.bowler;
+      L.thisOver = det.thisOver;
+      if (det.summary) { L.summary = det.summary; }
+    } else {
+      L.chasing = /target/.test(bat.raw);
+    }
+    return L;
+  }
+
+  function refresh() {
+    if (cfg.demo) { model = demoModel(); render(); schedule(60); return; }
+    Promise.all([loadCricket(), loadFootball(), loadFavorite()]).then(function (res) {
+      var cr = res[0], fb = res[1], fav = res[2];
+      if (!cr.ok && !fb.ok) { throw new Error('offline'); }
+      var all = cr.list.concat(fb.list);
+      var t = now(), favId = cfg.favoriteTeam && cfg.favoriteTeam.id;
+      var liveCr = cr.list.filter(function (m) { return m.state === 'in'; }).sort(function (x, y) { return followsCricket(y) - followsCricket(x); });
+      var liveFb = fb.list.filter(function (m) { return m.state === 'in'; });
+      var favLive = liveFb.filter(function (m) { return m.home.id === favId || m.away.id === favId; });
+      var primary = liveCr.find(function (m) { return followsCricket(m) === 2; }) || favLive[0] || liveCr[0] || liveFb[0] || null;
+
+      // Next up: the soonest match for a team you follow.
+      var cands = cr.list.filter(function (m) { return m.state === 'pre' && followsCricket(m) === 2; });
+      if (fav.next && fav.next.state === 'pre') { cands.push(fav.next); }
+      cands.sort(function (x, y) { return x.date - y.date; });
+
+      var m = { updated: Date.now(), next: cands[0] || null, table: fav.table || null };
+      m.alsoOn = liveFb.concat(liveCr).filter(function (x) { return !primary || x.id !== primary.id; });
+      m.later = all.filter(function (x) { return x.state === 'pre' && x.date > t && x.date - t < 20 * 3600e3; }).sort(function (x, y) { return x.date - y.date; });
+      m.days = [0, 1, 2].map(function (o) {
+        var s = dayStart(addDays(t, o)), e = dayStart(addDays(t, o + 1));
+        var items = all.filter(function (x) { return x.date >= s && x.date < e; }).sort(function (x, y) { return x.date - y.date; });
+        return { label: (o === 0 ? 'TODAY - ' : '') + dayLabel(s), items: items };
+      });
+      if (primary && primary.sport === 'cricket') {
+        return loadCricketDetail(primary).then(function (det) { m.primary = buildLiveCricket(primary, det); return m; }, function () { m.primary = buildLiveCricket(primary, null); return m; });
+      }
+      m.primary = primary;
+      return m;
+    }).then(function (m) {
+      model = m;
+      render();
+      schedule(m.primary || (m.alsoOn && m.alsoOn.length) ? 30 : 300);
+    }).catch(function (err) {
+      console.error('Match Day refresh failed:', err);
+      if (model) { model.offline = true; } else { model = { offline: true, days: [], alsoOn: [], later: [] }; }
+      render();
+      schedule(60);
+    });
+  }
+  function schedule(sec) {
+    clearTimeout(timer);
+    timer = setTimeout(refresh, sec * 1000);
+  }
+  // Countdowns and "today" labels tick even between data refreshes.
+  setInterval(function () { if (model) { render(); } }, 30000);
+
+  // ---------------------------------------------------------------- demo data (the design's sample)
+  function demoModel() {
+    var base = new Date(); base.setHours(13, 50, 0, 0);
+    var t0 = dayStart(base.getTime());
+    var at = function (dayOff, h, mi) { var d = new Date(addDays(t0, dayOff)); d.setHours(h, mi, 0, 0); return d.getTime(); };
+    var C = {
+      LIV: { abbr: 'LIV', name: 'Liverpool', color: '#C8102E', alt: '#F2F4F3' },
+      NEW: { abbr: 'NEW', name: 'Newcastle United', color: '#EDEFF2', alt: '#141414', style: 'vstripes' },
+      CHE: { abbr: 'CHE', name: 'Chelsea', color: '#0A4595', alt: '#FFD400' },
+      TOT: { abbr: 'TOT', name: 'Tottenham Hotspur', color: '#EDEFF2', alt: '#13224F', style: 'band2' },
+      MCI: { abbr: 'MCI', name: 'Manchester City', color: '#6CABDD', alt: '#0B2244', style: 'bandHigh' },
+      PSV: { abbr: 'PSV', name: 'PSV', color: '#E8252B', alt: '#F2F4F3', style: 'bandHigh' },
+      ARS: { abbr: 'ARS', name: 'Arsenal', color: '#EF0107', alt: '#F2F4F3', style: 'sides' }
+    };
+    var team = function (k, extra) { return Object.assign({}, C[k], extra || {}); };
+    var cr = function (h, a) { return { abbr: h }; };
+    var fx = function (sport, h, a, date, sub, state) {
+      return { sport: sport, home: sport === 'cricket' ? { abbr: h } : team(h), away: sport === 'cricket' ? { abbr: a } : team(a), date: date, sub: sub, state: state || 'pre' };
+    };
+    return {
+      demo: true, demoNow: base.getTime(), demoAt: Date.now(), updated: base.getTime(),
+      primary: {
+        sport: 'cricket', short: '2nd T20I', title: 'PAK v AUS - 2nd T20I - Lahore',
+        batting: { abbr: 'PAK', score: '148-4', overs: '16.2' }, fielding: { abbr: 'AUS', score: '172-6' },
+        chasing: true, need: 25, ballsLeft: 22, runRate: '9.08', rrr: '6.82',
+        batters: [{ name: 'Babar Azam', runs: 62, balls: 41 }, { name: 'Mohammad Rizwan', runs: 18, balls: 12 }],
+        bowler: { surname: 'Hazlewood', figures: '3-0-24-1' }, thisOver: ['1', '4', '0', 'W', '2']
+      },
+      alsoOn: [{ sport: 'football', home: team('ARS', { score: '1' }), away: team('MCI', { score: '0' }), minute: "67'" }],
+      later: [fx('football', 'LIV', 'NEW', at(0, 23, 30)), fx('football', 'CHE', 'TOT', at(1, 1, 30))],
+      next: { sport: 'football', home: team('LIV'), away: team('ARS'), date: at(0, 23, 30), short: 'PL MW12', venue: 'Anfield', broadcast: 'A Sports' },
+      days: [
+        { label: 'TODAY - ' + dayLabel(at(0, 12, 0)), items: [fx('cricket', 'PAK', 'AUS', at(0, 19, 30), '2nd T20I', 'in'), fx('football', 'LIV', 'NEW', at(0, 23, 30), 'Premier League'), fx('football', 'CHE', 'TOT', at(1, 1, 30), 'Premier League')] },
+        { label: dayLabel(at(1, 12, 0)), items: [fx('cricket', 'NZ', 'ENG', at(1, 8, 0), '1st Test - Day 2'), fx('cricket', 'PAK', 'AUS', at(1, 21, 0), '3rd T20I - Series decider')] },
+        { label: dayLabel(at(2, 12, 0)), items: [fx('football', 'MCI', 'PSV', at(2, 1, 0), 'Champions League'), fx('cricket', 'NZ', 'ENG', at(2, 8, 0), '1st Test - Day 3')] }
+      ],
+      table: { team: team('LIV'), rank: 2, points: 26, gd: '+14', form: ['W', 'W', 'D', 'L', 'W'] },
+      tz: 'PKT'
+    };
+  }
+
+  // ---------------------------------------------------------------- bridge to the app
+  window.matchday = {
+    setConfig: function (c) {
+      var demoChanged = c.demo !== cfg.demo;
+      Object.keys(c || {}).forEach(function (k) { cfg[k] = c[k]; });
+      if (demoChanged || !model) { model = null; render(); refresh(); } else { render(); }
+    },
+    refresh: refresh
+  };
+  // Preview in a browser: widget.html?demo=1&size=medium&view=idle
+  (function () {
+    var q = new URLSearchParams(location.search);
+    if (q.get('size')) { cfg.size = q.get('size'); }
+    if (q.get('view')) { cfg.view = q.get('view'); }
+    if (q.get('demo')) { cfg.demo = q.get('demo') === '1'; }
+    if (q.get('accent')) { cfg.accent = '#' + q.get('accent'); }
+  })();
+  render();
+  post({ type: 'ready' });
+  // Opened directly in a browser (no app around it): run with the defaults.
+  setTimeout(function () { if (!model) { refresh(); } }, 1500);
+})();
+</script>
+</body>
+</html>

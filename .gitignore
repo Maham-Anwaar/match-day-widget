@@ -1,0 +1,4 @@
+build/
+.DS_Store
+# Your settings stay on your Mac
+config.json
