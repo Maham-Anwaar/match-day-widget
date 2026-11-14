@@ -1,3 +1,5 @@
+<img src="icon.svg" width="128" alt="Match Day app icon">
+
 # Match Day
 
 Live cricket and football scores on your Mac desktop, in a little pixel-art widget.
