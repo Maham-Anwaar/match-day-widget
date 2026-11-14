@@ -53,12 +53,12 @@ cd match-day-widget
 ./build.sh
 ```
 
-This compiles the app and installs it to `~/Applications/Match Day.app`. If you have an Apple Development certificate in your keychain it's used for signing (macOS may ask once for your keychain password: choose **Always Allow**); otherwise the app is signed locally.
+This compiles the app and installs it to `/Applications/Match Day.app`. If you have an Apple Development certificate in your keychain it's used for signing (macOS may ask once for your keychain password: choose **Always Allow**); otherwise the app is signed locally.
 
 ### 3. Open it
 
 ```bash
-open ~/Applications/"Match Day.app"
+open /Applications/"Match Day.app"
 ```
 
 The first time, macOS asks whether Match Day can access your **Documents** folder: click **Allow** (its settings live in `Documents/Match Day`).
@@ -129,7 +129,7 @@ Then open `http://localhost:8000/widget.html?demo=1&size=medium&view=live` (drop
 Quit from the menu bar, then:
 
 ```bash
-rm -rf ~/Applications/"Match Day.app" ~/Documents/"Match Day"
+rm -rf /Applications/"Match Day.app" ~/Documents/"Match Day"
 ```
 
 ## Troubleshooting

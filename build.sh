@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Builds "Match Day.app" and installs it to ~/Applications.
+# Builds "Match Day.app" and installs it to /Applications.
 # Usage: ./build.sh            (signs with your Apple Development certificate if present)
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -39,7 +39,7 @@ codesign --force --timestamp=none --sign "${ID:--}" "$APP"
 codesign --verify --strict "$APP"
 
 pkill -x MatchDay 2>/dev/null || true
-mkdir -p ~/Applications
-rm -rf ~/Applications/"Match Day.app"
-cp -R "$APP" ~/Applications/
-echo "Installed ~/Applications/Match Day.app"
+rm -rf ~/Applications/"Match Day.app"   # older builds installed here
+rm -rf /Applications/"Match Day.app"
+cp -R "$APP" /Applications/
+echo "Installed /Applications/Match Day.app"
